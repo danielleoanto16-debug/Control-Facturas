@@ -292,9 +292,23 @@
   let proyectos = JSON.parse(localStorage.getItem('proyectos_activos')) || [];
   let finalizados = JSON.parse(localStorage.getItem('proyectos_finalizados')) || [];
   let proyectoActual = null;
-  let origenVista = 'lista';
+  let origenVista = localStorage.getItem('origen_vista') || 'lista';
 
-  // ESCUCHADORES EN TIEMPO REAL CON FIREBASE (CORREGIDOS PARA EVITAR BORRADO EN INICIO)
+  // RESTAURAR PROYECTO ACTUAL SI SE RECARGÓ LA PÁGINA EN LA VISTA DE MATERIALES
+  const savedIndex = localStorage.getItem('proyecto_actual_index');
+  if (savedIndex !== null) {
+    const listaTarget = (origenVista === 'lista') ? proyectos : finalizados;
+    if (listaTarget[savedIndex]) {
+      proyectoActual = listaTarget[savedIndex];
+      // Mostrar directamente la ventana de materiales si el usuario estaba ahí
+      window.addEventListener('DOMContentLoaded', () => {
+        abrirVentana('materiales');
+        cargarVistaMateriales();
+      });
+    }
+  }
+
+  // ESCUCHADORES EN TIEMPO REAL CON FIREBASE
   db.ref('proyectos_activos').on('value', (snapshot) => {
     const data = snapshot.val();
     if (data) {
@@ -341,8 +355,14 @@
   function abrirVentana(id){
     document.querySelectorAll('.ventana').forEach(v=>v.classList.remove('activa'));
     document.getElementById(id).classList.add('activa');
-    if(id === 'lista') actualizarLista();
-    if(id === 'finalizados') actualizarFinalizados();
+    if(id === 'lista') {
+      localStorage.removeItem('proyecto_actual_index');
+      actualizarLista();
+    }
+    if(id === 'finalizados') {
+      localStorage.removeItem('proyecto_actual_index');
+      actualizarFinalizados();
+    }
   }
 
   function guardarNombreProyecto(){
@@ -357,14 +377,19 @@
         lugar: lugar,
         obra: obra,
         nombre: `${obra} (${lugar})`,
-        facturas:[], 
-        total:0
+        facturas: [], 
+        total: 0
       };
       proyectos.push(proyectoActual);
       guardarEnStorage();
+
+      const nuevoIndex = proyectos.length - 1;
+      localStorage.setItem('proyecto_actual_index', nuevoIndex);
+      localStorage.setItem('origen_vista', 'lista');
+      origenVista = 'lista';
+
       inputLugar.value = "";
       inputObra.value = "";
-      origenVista = 'lista';
       abrirVentana('materiales');
       cargarVistaMateriales();
     } else {
@@ -382,7 +407,10 @@
     document.getElementById('dispLugar').innerText = lugarTxt;
     
     const btnVolver = document.getElementById('btnVolverAtras');
-    btnVolver.onclick = () => abrirVentana(origenVista);
+    btnVolver.onclick = () => {
+      localStorage.removeItem('proyecto_actual_index');
+      abrirVentana(origenVista);
+    };
     
     const esFinalizado = finalizados.some(p => (p.obra || p.nombre) === (proyectoActual.obra || proyectoActual.nombre) && p.lugar === proyectoActual.lugar);
     document.getElementById('btnNuevaFactura').style.display = esFinalizado ? 'none' : 'block';
@@ -392,13 +420,22 @@
   }
 
   function nuevaFactura(){
-    const factura = {numFactura:"", lugar:"", fecha:"", materiales:[], total:0};
+    if(!proyectoActual){
+      alert("No hay un proyecto activo seleccionado. Vuelve a abrir el proyecto desde la lista.");
+      abrirVentana('lista');
+      return;
+    }
+    if(!Array.isArray(proyectoActual.facturas)){
+      proyectoActual.facturas = [];
+    }
+    const factura = { numFactura: "", lugar: "", fecha: "", materiales: [], total: 0 };
     proyectoActual.facturas.push(factura);
     guardarEnStorage();
     mostrarFacturas();
   }
 
   function eliminarFactura(fIndex){
+    if(!proyectoActual || !proyectoActual.facturas) return;
     if(confirm(`¿Estás seguro de eliminar la Factura #${fIndex + 1}?`)){
       proyectoActual.facturas.splice(fIndex, 1);
       recalcularTotales();
@@ -408,21 +445,26 @@
   }
 
   function actualizarDatosFactura(index, campo, valor) {
+    if(!proyectoActual || !proyectoActual.facturas[index]) return;
     proyectoActual.facturas[index][campo] = valor;
     guardarEnStorage();
   }
 
   function agregarMaterial(index){
+    if(!proyectoActual || !proyectoActual.facturas[index]) return;
     const inputMat = document.getElementById(`material${index}`);
     const inputVal = document.getElementById(`valor${index}`);
     const inputCant = document.getElementById(`cantidad${index}`);
 
-    const material = inputMat.value.trim();
-    const valor = parseFloat(inputVal.value);
-    const cantidad = parseFloat(inputCant.value);
+    const material = inputMat ? inputMat.value.trim() : '';
+    const valor = inputVal ? parseFloat(inputVal.value) : NaN;
+    const cantidad = inputCant ? parseFloat(inputCant.value) : NaN;
 
     if(material && !isNaN(valor) && !isNaN(cantidad)){
       const total = valor * cantidad;
+      if(!Array.isArray(proyectoActual.facturas[index].materiales)) {
+        proyectoActual.facturas[index].materiales = [];
+      }
       proyectoActual.facturas[index].materiales.push({material, valor, cantidad, total});
       
       recalcularTotales();
@@ -437,6 +479,7 @@
   }
 
   function editarMaterial(fIndex, mIndex, campo, valor){
+    if(!proyectoActual || !proyectoActual.facturas[fIndex] || !proyectoActual.facturas[fIndex].materiales[mIndex]) return;
     const mat = proyectoActual.facturas[fIndex].materiales[mIndex];
     if(campo === 'material') mat.material = valor;
     if(campo === 'valor') mat.valor = parseFloat(valor) || 0;
@@ -449,6 +492,7 @@
   }
 
   function eliminarMaterial(fIndex, mIndex){
+    if(!proyectoActual || !proyectoActual.facturas[fIndex] || !proyectoActual.facturas[fIndex].materiales) return;
     proyectoActual.facturas[fIndex].materiales.splice(mIndex, 1);
     recalcularTotales();
     guardarEnStorage();
@@ -458,9 +502,10 @@
   function recalcularTotales(){
     if(!proyectoActual) return;
     let totalProyecto = 0;
+    if(!Array.isArray(proyectoActual.facturas)) proyectoActual.facturas = [];
     proyectoActual.facturas.forEach(f => {
       let totalFactura = 0;
-      if(f.materiales) {
+      if(Array.isArray(f.materiales)) {
         f.materiales.forEach(m => {
           m.total = (m.valor || 0) * (m.cantidad || 0);
           totalFactura += m.total;
@@ -470,11 +515,13 @@
       totalProyecto += totalFactura;
     });
     proyectoActual.total = totalProyecto;
-    document.getElementById('totalProyecto').innerText = proyectoActual.total.toFixed(2);
+    const elemTotal = document.getElementById('totalProyecto');
+    if(elemTotal) elemTotal.innerText = proyectoActual.total.toFixed(2);
   }
 
   function mostrarFacturas(){
     const contenedor = document.getElementById('listaFacturas');
+    if(!contenedor) return;
     contenedor.innerHTML = "";
     
     if(!proyectoActual.facturas || proyectoActual.facturas.length === 0){
@@ -487,13 +534,13 @@
       div.className = "factura";
       
       let htmlMateriales = "";
-      if(f.materiales) {
+      if(Array.isArray(f.materiales)) {
         f.materiales.forEach((m, mIndex)=>{
           htmlMateriales += `<tr>
-            <td><input value="${m.material}" onchange="editarMaterial(${fIndex}, ${mIndex}, 'material', this.value)"></td>
-            <td><input type="number" step="0.01" value="${m.valor}" onchange="editarMaterial(${fIndex}, ${mIndex}, 'valor', this.value)" style="width:70px;"></td>
-            <td><input type="number" step="1" value="${m.cantidad}" onchange="editarMaterial(${fIndex}, ${mIndex}, 'cantidad', this.value)" style="width:55px;"></td>
-            <td>$${m.total.toFixed(2)}</td>
+            <td><input value="${m.material || ''}" onchange="editarMaterial(${fIndex}, ${mIndex}, 'material', this.value)"></td>
+            <td><input type="number" step="0.01" value="${m.valor || 0}" onchange="editarMaterial(${fIndex}, ${mIndex}, 'valor', this.value)" style="width:70px;"></td>
+            <td><input type="number" step="1" value="${m.cantidad || 0}" onchange="editarMaterial(${fIndex}, ${mIndex}, 'cantidad', this.value)" style="width:55px;"></td>
+            <td>$${(m.total || 0).toFixed(2)}</td>
             <td class="no-print"><button class="peligro sm" onclick="eliminarMaterial(${fIndex}, ${mIndex})">🗑️</button></td>
           </tr>`;
         });
@@ -553,8 +600,9 @@
 
   function actualizarLista(){
     const lista = document.getElementById('listaProyectos');
+    if(!lista) return;
     lista.innerHTML = "";
-    if(proyectos.length === 0) {
+    if(!proyectos || proyectos.length === 0) {
       lista.innerHTML = "<li style='justify-content:center; color:#8e8e93;'>No hay proyectos en ejecución.</li>";
       return;
     }
@@ -581,13 +629,19 @@
 
   function abrirProyecto(index, origen){
     origenVista = origen;
-    proyectoActual = (origen === 'lista') ? proyectos[index] : finalizados[index];
+    const listaTarget = (origen === 'lista') ? proyectos : finalizados;
+    proyectoActual = listaTarget[index];
+    
+    localStorage.setItem('proyecto_actual_index', index);
+    localStorage.setItem('origen_vista', origen);
+
     abrirVentana('materiales');
     cargarVistaMateriales();
   }
 
   function finalizarProyecto(index){
     const p = proyectos[index];
+    if(!p) return;
     const titulo = p.obra ? `${p.obra} (${p.lugar})` : p.nombre;
     if(confirm(`¿Estás seguro de finalizar el proyecto "${titulo}"?`)){
       finalizados.push(proyectos[index]);
@@ -599,8 +653,9 @@
 
   function actualizarFinalizados(){
     const lista = document.getElementById('listaFinalizados');
+    if(!lista) return;
     lista.innerHTML = "";
-    if(finalizados.length === 0) {
+    if(!finalizados || finalizados.length === 0) {
       lista.innerHTML = "<li style='justify-content:center; color:#8e8e93;'>No hay proyectos finalizados.</li>";
       return;
     }
@@ -627,6 +682,7 @@
 
   function reabrirProyecto(index){
     const p = finalizados[index];
+    if(!p) return;
     const titulo = p.obra ? `${p.obra} (${p.lugar})` : p.nombre;
     if(confirm(`¿Deseas reactivar el proyecto "${titulo}"?`)){
       proyectos.push(finalizados[index]);
@@ -639,6 +695,7 @@
   function eliminarProyecto(index, tipo){
     const listaTarget = (tipo === 'activos') ? proyectos : finalizados;
     const p = listaTarget[index];
+    if(!p) return;
     const titulo = p.obra ? `${p.obra} (${p.lugar})` : p.nombre;
 
     if(confirm(`¿Estás seguro de ELIMINAR PERMANENTEMENTE el proyecto "${titulo}"?`)){
