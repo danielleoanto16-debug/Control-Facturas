@@ -2,7 +2,6 @@ const CACHE_NAME = 'control-facturas-v1';
 const ASSETS = [
   './',
   './index.html',
-  './visor.html',
   './manifest.json'
 ];
 
