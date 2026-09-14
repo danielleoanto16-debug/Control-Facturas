@@ -1,8 +1,10 @@
 {
+  "id": "control-facturas-app",
   "name": "Control de Facturas y Materiales",
   "short_name": "Facturas App",
   "description": "Sistema de gestión e inspección de facturas y presupuestos en tiempo real.",
   "start_url": "./index.html",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#111827",
   "theme_color": "#2563eb",
